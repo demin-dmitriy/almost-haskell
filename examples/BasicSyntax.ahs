@@ -1,0 +1,31 @@
+module Hello where
+
+
+data Bool where
+    True : Bool
+    False : Bool
+
+data Nat where
+    Zero : Nat
+    Succ : Nat → Nat
+
+data BinTree a where
+    Leaf : a → BinTree a
+    Branch : BinTree a → BinTree a → BinTree a
+
+not : Bool → Bool
+or : Bool → Bool → Bool
+treeMap : a b ⇒ BinTree a → (a → b) → BinTree b
+
+not True = False
+not False = True
+
+or False False = False
+or _ _ = True
+
+treeMap (Leaf x) f = Leaf (f x)
+treeMap (Branch l r) f = Branch (treeMap l f) (treeMap r f)
+
+-- This is one-line comment
+{- This is
+multiline comment and {- it can be nested -} -}
