@@ -5,10 +5,7 @@ SRC_DIR=src
 
 all: generate_files
 
-generate_files: \
-		${SRC_DIR}/Grammar.g4 \
-		${SRC_DIR}/PreLexer.g4
-	cp -R ${SRC_DIR}/* ${BUILD_DIR}/
+generate_files: copy_files
 	${ANTLR} ${BUILD_DIR}/PreLexer.g4 -o ${BUILD_DIR} ${ANTLR_OPTIONS}
 	# Looks like a bug in antlr
 	mv ${BUILD_DIR}/${BUILD_DIR}/* ${BUILD_DIR}
@@ -22,6 +19,12 @@ generate_files: \
 	mv ${BUILD_DIR}/${BUILD_DIR}/* ${BUILD_DIR}
 
 	rmdir ${BUILD_DIR}/${BUILD_DIR}
+
+copy_files:
+	cp --preserve=timestamps -R ${SRC_DIR}/* ${BUILD_DIR}/
+
+test: copy_files
+	python ${BUILD_DIR}/Test.py
 
 clean:
 	rm -rf ${BUILD_DIR}/*

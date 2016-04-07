@@ -3,7 +3,9 @@
 // handle identation sensistivity
 lexer grammar PreLexer;
 
-WS : [ \t]+ -> skip ;
+// \t, \v and \f tabs are illegal
+// (\v is \u000b)
+WS : [ ]+ -> skip ;
 
 // Comments
 OnelineComment : '--' ~[\r\n]* -> skip ;
@@ -39,8 +41,8 @@ Colon : ':' ;
 // identifiers that start with "{-" but still allow identifiers like "{abc" or
 // "a{-bc". Also antlr currently doesn't support anything that could make
 // this rule a little more concise and readable.
-ID :     ~[{ \t\r\n()] LETTER* // ID that doesn't start with '{'
-   | '{' ~[- \t\r\n()] LETTER* // ID that starts with '{' not followed by '-'
+ID :     ~[{ \t\u000b\f\r\n()] LETTER* // ID that doesn't start with '{'
+   | '{' ~[- \t\u000b\f\r\n()] LETTER* // ID that starts with '{' not followed by '-'
    ;
 
-fragment LETTER : ~[ \t\r\n()] ;
+fragment LETTER : ~[ \t\u000b\f\r\n()] ;
