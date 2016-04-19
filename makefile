@@ -14,7 +14,7 @@ generate_files: copy_files
 		python -c "from Lexer import *; print(AHToken.exportToAntlr())" \
 		> ${BUILD_DIR}/Lexer.tokens
 
-	${ANTLR} ${BUILD_DIR}/Grammar.g4 -o ${BUILD_DIR} ${ANTLR_OPTIONS}
+	${ANTLR} ${BUILD_DIR}/AHParser.g4 -o ${BUILD_DIR} ${ANTLR_OPTIONS}
 
 	mv ${BUILD_DIR}/${BUILD_DIR}/* ${BUILD_DIR}
 
@@ -22,6 +22,10 @@ generate_files: copy_files
 
 copy_files:
 	cp --preserve=timestamps -R ${SRC_DIR}/* ${BUILD_DIR}/
+
+java_files: generate_files
+	cd ${BUILD_DIR}; ../tools/antlr4 PreLexer.g4 AHParser.g4
+	javac -classpath "./tools/antlr4.jar" ${BUILD_DIR}/*.java
 
 test: copy_files
 	python ${BUILD_DIR}/Test.py

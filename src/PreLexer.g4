@@ -17,6 +17,8 @@ LParen : '(' ;
 
 RParen : ')' ;
 
+Dot : '.' ;
+
 NEWLINE : [\r\n] ;
 
 // Reserved keywords
@@ -25,6 +27,10 @@ Data : 'data' ;
 Where : 'where' ;
 
 Module : 'module' ;
+
+From : 'from' ;
+
+Import : 'import' ;
 
 RArrow : '->' | '→' ;
 
@@ -40,9 +46,10 @@ Colon : ':' ;
 // Unfortunately, to overcome limitations of antlr4 we need to explicitly forbid
 // identifiers that start with "{-" but still allow identifiers like "{abc" or
 // "a{-bc". Also antlr currently doesn't support anything that could make
-// this rule a little more concise and readable.
-ID :     ~[{ \t\u000b\f\r\n()] LETTER* // ID that doesn't start with '{'
-   | '{' ~[- \t\u000b\f\r\n()] LETTER* // ID that starts with '{' not followed by '-'
+// this rule a little more concise and readable (hence legal charaters in
+// keyword are basicly repeated three times).
+ID :     ~[{ .\t\u000b\f\r\n()] LETTER* // ID that doesn't start with '{'
+   | '{' ~[- .\t\u000b\f\r\n()] LETTER* // ID that starts with '{' not followed by '-'
    ;
 
-fragment LETTER : ~[ \t\u000b\f\r\n()] ;
+fragment LETTER : ~[ .\t\u000b\f\r\n()] ;
