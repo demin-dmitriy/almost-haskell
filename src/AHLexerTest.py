@@ -1,5 +1,5 @@
 from unittest import TestCase
-from Lexer import *
+from AHLexer import *
 
 # Tests and helper methods that are common for PreLexer and AHLexer
 class CommonLexerTestCase:

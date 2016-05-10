@@ -11,8 +11,8 @@ generate_files: copy_files
 	mv ${BUILD_DIR}/${BUILD_DIR}/* ${BUILD_DIR}
 
 	env PYTHONPATH=./${BUILD_DIR} \
-		python -c "from Lexer import *; print(AHToken.exportToAntlr())" \
-		> ${BUILD_DIR}/Lexer.tokens
+		python -c "from AHLexer import *; print(AHToken.exportToAntlr())" \
+		> ${BUILD_DIR}/AHLexer.tokens
 
 	${ANTLR} ${BUILD_DIR}/AHParser.g4 -o ${BUILD_DIR} ${ANTLR_OPTIONS}
 

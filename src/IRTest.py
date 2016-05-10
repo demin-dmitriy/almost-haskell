@@ -1,50 +1,108 @@
 from unittest import TestCase
+from AHLexer import AHLexer
+from antlr4 import InputStream, CommonTokenStream
+from AHParser import AHParser
 from IR import *
 
 
 class IRTest(TestCase):
     def parse(self, s):
-        from Lexer import AHLexer
-        from antlr4 import InputStream, CommonTokenStream
-        from AHParser import AHParser
         parser = AHParser(CommonTokenStream(AHLexer(InputStream(s))))
         irbuilder = IRBuilder()
-        irbuilder.addModule(parser)
+        irbuilder.parseModule(parser)
         return irbuilder.makeIR()
 
-    # Helper method for defining nested structures
+    BUILTINS_MODULE = ('builtins.', Module, {
+        'name': '{-builtins-}',
+        'scope': {
+            '{-builtins-}': ('builtins.', ),
+            '_→_': ('arrow-type.', DataTypeDef, {
+                'name': '_→_',
+                'typeArgs': ['a', 'b'],
+                'argRefs': [
+                    (TypeVariable, {'name': 'a'}),
+                    (TypeVariable, {'name': 'b'})
+                    ],
+                'constructors': []
+                })
+            }
+        })
+    ARROW_TYPE_IMPORT = (ImportedEntity, {
+        'originModuleName': ['{-builtins-}'],
+        'originName': '_→_',
+        'importedName': '_→_',
+        'entity': ('arrow-type.', )
+        })
+
+    # Helper method for defining nested structures, possibly with cyclic
+    # backward and forward references.
     @staticmethod
     def make(struct):
-        if isinstance(struct, (str, int)):
-            return struct
-        if isinstance(struct, list):
-            result = []
-            for item in struct:
-                result.append(IRTest.make(item))
+        original_refs = {}
+        built_refs = {}
+
+        def findRefs(struct):
+            if isinstance(struct, list):
+                for item in struct: findRefs(item)
+            elif isinstance(struct, dict):
+                for _, value in struct.items(): findRefs(value)
+            elif isinstance(struct, tuple):
+                if len(struct) == 1:
+                    return
+                elif len(struct) == 3: # It's labeled structure
+                    label, cls, fields = struct
+                    assert label not in original_refs
+                    # That was all for this moment
+                    # I think, uniplate would be very helpful here
+                    original_refs[label] = struct
+                else:
+                    cls, fields = struct
+
+                if cls is tuple:
+                    for arg in fields: findRefs(arg)
+                else:
+                    for value in fields.values(): findRefs(value)
+
+
+        def buildStruct(struct):
+            if isinstance(struct, (str, int, type(None))):
+                return struct
+            if isinstance(struct, list):
+                return [ buildStruct(item) for item in struct ]
+            if isinstance(struct, dict):
+                return { name: buildStruct(value)
+                         for name, value in struct.items() }
+
+            assert isinstance(struct, tuple)
+            if len(struct) == 1: # It's a reference
+                label = struct[0]
+                if label in original_refs:
+                    return buildStruct(original_refs[label])
+                elif label in built_refs:
+                    return built_refs[label]
+                else: assert False
+            elif len(struct) == 3: # It's labeled structure
+                label, cls, fields = struct
+                if label in built_refs:
+                    return built_refs[label]
+                assert label in original_refs
+                result = cls()
+                del original_refs[label]
+                built_refs[label] = result
+            else:
+                label = None
+                cls, fields = struct
+                if cls is tuple:
+                    return tuple(buildStruct(arg) for arg in fields)
+                result = cls()
+
+            for name, value in fields.items():
+                assert hasattr(result, name)
+                setattr(result, name, buildStruct(value))
             return result
-        if isinstance(struct, dict):
-            result = {}
-            for name, value in struct.items():
-                result[name] = IRTest.make(value)
-            return result
 
-        cls, fields = struct
-        if cls == tuple:
-            return tuple(IRTest.make(arg) for arg in fields)
-
-        result = cls()
-        for name, value in fields.items():
-            assert hasattr(result, name)
-            setattr(result, name, IRTest.make(value))
-        return result
-
-    @staticmethod
-    def moduleSelfImport(name):
-        return (ImportedEntity, {
-            'originModuleName': [name],
-            'originName': name,
-            'importedName': name
-            })
+        findRefs(struct)
+        return buildStruct(struct)
 
     def assertCorrectParse(self, str, out):
         parsed = self.parse(str)
@@ -57,18 +115,37 @@ class IRTest(TestCase):
         self.assertEqual(IR({}), IR(self.make({})))
         self.assertCorrectParse(
             """module Trivial where""",
-            {'Trivial': (Module, {
+            {'Trivial': ('top.', Module, {
                 'name': 'Trivial',
                 'scope': {
-                    'Trivial': self.moduleSelfImport('Trivial'),
+                    'Trivial': ('top.', ),
+                    '_→_': self.ARROW_TYPE_IMPORT
                 }
-                })
+                }),
+             IR.BUILTINS_MODULE_NAME: self.BUILTINS_MODULE
             })
 
-    # TODO: test import cycles
-    def testImportCycles(self):
-        #self.assertTrue(False)
-        pass
+    # TODO all of this
+    # def testImports(self):
+    #     self.assertCorrectParse(
+    #         """module Imports where
+
+    #         """)
+    #     pass
+
+    # # TODO: test import cycles
+    # def testImportCycles(self):
+    #     #self.assertTrue(False)
+
+    #     # module1 = """module ImportCycle1 where
+
+    #     #           """
+
+    #     # parser = AHParser(CommonTokenStream(AHLexer(InputStream(s))))
+    #     # irbuilder = IRBuilder()
+    #     # irbuilder.parseModule(parser)
+
+    #     pass
 
     # TODO: тесты на имя модуля, вложенные модули
     def testModules(self):
@@ -77,26 +154,32 @@ class IRTest(TestCase):
                  module Submodule1 where
                  module Submodule2 where
             """,
-            { 'ModuleTest1': (Module, {
+            { 'ModuleTest1': ('top.', Module, {
                 'name': 'ModuleTest1',
                 'scope': {
-                    'ModuleTest1': self.moduleSelfImport('ModuleTest1'),
-                    'Submodule1': (Module, {
+                    'ModuleTest1': ('top.', ),
+                    'Submodule1': ('sub1.', Module, {
                         'name': 'Submodule1',
                         'scope': {
-                            'Submodule1': self.moduleSelfImport('Submodule1'),
-                            'ModuleTest1': self.moduleSelfImport('ModuleTest1')
+                            'ModuleTest1': ('top.', ),
+                            'Submodule1': ('sub1.', ),
+                            'Submodule2': ('sub2.', ),
+                            '_→_': self.ARROW_TYPE_IMPORT
                             }
                         }),
-                    'Submodule2': (Module, {
+                    'Submodule2': ('sub2.', Module, {
                         'name': 'Submodule2',
                         'scope': {
-                            'Submodule2': self.moduleSelfImport('Submodule2'),
-                            'ModuleTest1': self.moduleSelfImport('ModuleTest1')
+                            'ModuleTest1': ('top.', ),
+                            'Submodule1': ('sub1.', ),
+                            'Submodule2': ('sub2.', ),
+                            '_→_': self.ARROW_TYPE_IMPORT
                             }
-                        })
+                        }),
+                    '_→_': self.ARROW_TYPE_IMPORT
                     }
-                })
+                }),
+                IR.BUILTINS_MODULE_NAME: self.BUILTINS_MODULE
             })
 
     def testDatatype(self):
@@ -104,17 +187,19 @@ class IRTest(TestCase):
             """module DataTest1 where
                data Empty where
             """,
-            { 'DataTest1': (Module, {
+            { 'DataTest1': ('top.', Module, {
                 'name': 'DataTest1',
                 'scope': {
-                    'DataTest1': self.moduleSelfImport('DataTest1'),
+                    'DataTest1': ('top.', ),
                     'Empty': (DataTypeDef, {
                         'name': 'Empty',
                         'typeArgs': [],
                         'constructors': []
-                        })
+                        }),
+                    '_→_': self.ARROW_TYPE_IMPORT
                     }
-                })
+                }),
+                IR.BUILTINS_MODULE_NAME: self.BUILTINS_MODULE
             })
 
         self.assertCorrectParse(
@@ -127,67 +212,77 @@ class IRTest(TestCase):
                  Nothing : Maybe a
                  Just : a → Maybe a
             """,
-            { 'DataTest2' (Module, {
+            { 'DataTest2': ('top.', Module, {
                 'name': 'DataTest2',
                 'scope': {
-                    'DataTest2': self.moduleSelfImport('DataTest2'),
-                    'Unit': (DataTypeDef, {
+                    'DataTest2': ('top.', ),
+                    'Unit': ('unit-type.', DataTypeDef, {
                         'name': 'Unit',
                         'typeArgs': [],
+                        'argRefs': [],
                         'constructors': [
-                            (Constructor, {
+                            ('unit-type.unit.', Constructor, {
                                 'name': 'unit',
+                                'datatype': ('unit-type.', ),
                                 'type': (Type, {
                                     'typeArgs': [],
                                     'typeExpr': (TypeExpr, {
                                         'name': ['Unit'],
-                                        'args': [
-                                            (TypeExpr, {
-                                                'name': ['a'],
-                                                'args': []
-                                                })
-                                        ]
+                                        'typeRef': ('unit-type.',),
+                                        'args': []
                                         })
                                     })
                                 })
                         ]
                         }),
+                    'unit' : ('unit-type.unit.', ),
 
-                    'Maybe': (DataTypeDef, {
+                    'Maybe': ('maybe.', DataTypeDef, {
                         'name': 'Maybe',
-                        'typeArgs': 'a',
-                        constructors: [
-                            (Constructor, {
+                        'typeArgs': ['a'],
+                        'argRefs': [('maybe.a.', TypeVariable, {'name': 'a'})],
+                        'constructors': [
+                            ('maybe.nothing.', Constructor, {
                                 'name': 'Nothing',
+                                'datatype': ('maybe.', ),
                                 'type': (Type, {
                                     'typeArgs': [],
+                                    'argRefs': [],
                                     'typeExpr': (TypeExpr, {
                                         'name': ['Maybe'],
+                                        'typeRef': ('maybe.', ),
                                         'args': [
                                             (TypeExpr, {
                                                 'name': ['a'],
+                                                'typeRef': ('maybe.a.', ),
                                                 'args': []
                                                 })
                                         ]
                                         })
                                     })
-                                })
-                            (Constructor, {
+                                }),
+                            ('maybe.just.', Constructor, {
                                 'name': 'Just',
+                                'datatype': ('maybe.', ),
                                 'type': (Type, {
                                     'typeArgs': [],
+                                    'argRefs' : [],
                                     'typeExpr': (TypeExpr, {
                                         'name': ['_→_'],
+                                        'typeRef': ('arrow-type.', ),
                                         'args': [
                                             (TypeExpr, {
                                                 'name': ['a'],
+                                                'typeRef': ('maybe.a.', ),
                                                 'args': []
                                                 }),
                                             (TypeExpr, {
                                                 'name': ['Maybe'],
+                                                'typeRef': ('maybe.', ),
                                                 'args': [
                                                     (TypeExpr, {
                                                         'name': ['a'],
+                                                        'typeRef': ('maybe.a.', ),
                                                         'args': []
                                                         })
                                                 ]
@@ -197,9 +292,13 @@ class IRTest(TestCase):
                                     })
                                 })
                         ]
-                        })
+                        }),
+                    'Nothing': ('maybe.nothing.', ),
+                    'Just': ('maybe.just.', ),
+                    '_→_': self.ARROW_TYPE_IMPORT
                     }
-                })
+                }),
+                IR.BUILTINS_MODULE_NAME: self.BUILTINS_MODULE
             })
 
     def testFunction(self):
@@ -211,23 +310,29 @@ class IRTest(TestCase):
                loop : a ⇒ a
                loop = loop
             """,
-            { 'FunctionTest1': (Module, {
+            { 'FunctionTest1': ('top.', Module, {
                 'name': 'FunctionTest1',
                 'scope': {
-                    'FunctionTest1': self.moduleSelfImport('FunctionTest1'),
+                    'FunctionTest1': ('top.', ),
                     'id': (FunctionDef, {
                         'name': 'id',
                         'type': (Type, {
                             'typeArgs': ['a'],
+                            'argRefs': [
+                                ('id.a.', TypeVariable, {'name': 'a'})
+                            ],
                             'typeExpr': (TypeExpr, {
                                 'name': ['_→_'],
+                                'typeRef': ('arrow-type.', ),
                                 'args': [
                                     (TypeExpr, {
                                         'name': ['a'],
+                                        'typeRef': ('id.a.', ),
                                         'args': []
                                         }),
                                     (TypeExpr, {
                                         'name': ['a'],
+                                        'typeRef': ('id.a.', ),
                                         'args': []
                                         })
                                 ]
@@ -239,22 +344,28 @@ class IRTest(TestCase):
                                 [
                                     (PatternExpr, {
                                         'name': ['x'],
+                                        'bindingRef': ('id.x.', Variable, {'name': 'x'}),
                                         'args': []
                                         })
                                 ],
                                 (Expr, {
                                     'name': ['x'],
+                                    'funcRef': ('id.x.', ),
                                     'args': []
                                     })
                                 ))
                             ]
                         }),
-                    'loop': (FunctionDef, {
+                    'loop': ('loop.', FunctionDef, {
                         'name': 'loop',
                         'type': (Type, {
                             'typeArgs': ['a'],
+                            'argRefs': [
+                                ('loop.a.', TypeVariable, {'name': 'a'})
+                            ],
                             'typeExpr': (TypeExpr, {
                                 'name': ['a'],
+                                'typeRef': ('loop.a.', ),
                                 'args': []
                                 })
                             }),
@@ -264,14 +375,128 @@ class IRTest(TestCase):
                                 [],
                                 (Expr, {
                                     'name': ['loop'],
+                                    'funcRef': ('loop.', ),
                                     'args': []
                                     })
                                 ))
                             ]
-                        })
+                        }),
+                    '_→_': self.ARROW_TYPE_IMPORT
                     }
-                })
+                }),
+                IR.BUILTINS_MODULE_NAME: self.BUILTINS_MODULE
             })
+
+    def testPatternMatching(self):
+        self.assertCorrectParse(
+            """module PatternMatchingTest1 where
+
+               data Bool where
+                 True : Bool
+                 False : Bool
+
+               not : Bool → Bool
+               not True = False
+               not False = True
+            """,
+            { 'PatternMatchingTest1': ('top.', Module, {
+                'name': 'PatternMatchingTest1',
+                'scope': {
+                    'PatternMatchingTest1': ('top.', ),
+                    'Bool': ('bool.', DataTypeDef, {
+                        'name': 'Bool',
+                        'typeArgs': [],
+                        'argRefs': [],
+                        'constructors': [
+                            ('bool.true.', Constructor, {
+                                'name': 'True',
+                                'type': (Type, {
+                                    'typeArgs': [],
+                                    'argRefs': [],
+                                    'typeExpr': (TypeExpr, {
+                                        'name': ['Bool'],
+                                        'typeRef': ('bool.', ),
+                                        'args': []
+                                        })
+                                    }),
+                                'datatype': ('bool.', )
+                                }),
+                            ('bool.false.', Constructor, {
+                                'name': 'False',
+                                'type': (Type, {
+                                    'typeArgs': [],
+                                    'argRefs': [],
+                                    'typeExpr': (TypeExpr, {
+                                        'name': ['Bool'],
+                                        'typeRef': ('bool.', ),
+                                        'args': []
+                                        })
+                                    }),
+                                'datatype': ('bool.', )
+                                })
+                            ]
+                        }),
+                    'True': ('bool.true.', ),
+                    'False': ('bool.false.', ),
+                    'not': (FunctionDef, {
+                        'name': 'not',
+                        'type': (Type, {
+                            'typeArgs': [],
+                            'argRefs': [],
+                            'typeExpr': (TypeExpr, {
+                                'name': ['_→_'],
+                                'typeRef': ('arrow-type.', ),
+                                'args': [
+                                    (TypeExpr, {
+                                        'name': ['Bool'],
+                                        'typeRef': ('bool.', ),
+                                        'args': []
+                                        }),
+                                    (TypeExpr, {
+                                        'name': ['Bool'],
+                                        'typeRef': ('bool.', ),
+                                        'args': []
+                                        })
+                                    ]
+                                })
+                            }),
+                        'patternLen': 1,
+                        'matchRules': [
+                            (tuple, (
+                                [ (PatternExpr,{
+                                    'name': ['True'],
+                                    'bindingRef': ('bool.true.', ),
+                                    'args': []
+                                    })
+                                ],
+                                (Expr, {
+                                    'name': ['False'],
+                                    'funcRef': ('bool.false.', ),
+                                    'args': []
+                                    })
+                                )),
+
+                            (tuple, (
+                                [ (PatternExpr,{
+                                    'name': ['False'],
+                                    'bindingRef': ('bool.false.', ),
+                                    'args': []
+                                    })
+                                ],
+                                (Expr, {
+                                    'name': ['True'],
+                                    'funcRef': ('bool.true.', ),
+                                    'args': []
+                                    })
+                                ))
+                            ]
+                        }),
+                    '_→_': self.ARROW_TYPE_IMPORT
+                    }
+                }),
+               IR.BUILTINS_MODULE_NAME: self.BUILTINS_MODULE
+            })
+
 
     # TODO: пока пропустить
     def testInvalidDatatype(self):

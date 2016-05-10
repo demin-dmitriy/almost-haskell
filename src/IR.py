@@ -5,7 +5,9 @@ from AHParserVisitor import AHParserVisitor
 from CompilerException import CompilerException, NameError
 from IREntityVisitor import EntityVisitor, EntityVisitorWithModuleStack
 from AHParser import AHParser
-from IREntity import *
+from IREntity import Module, ImportedEntity, FunctionDef, TypeVariable, \
+                     DataTypeDef, Constructor, Type, TypeExpr, Variable, Expr, \
+                     PatternExpr, TypeVariable
 
 
 class SyntaxError(CompilerException):
@@ -27,70 +29,113 @@ class EntityValidator(EntityVisitorWithModuleStack):
 
     def ensure(self, cond):
         if not cond:
-            raise BadIR(msg)
+            raise BadIR()
 
     def enterModule(self, module):
-        super().enterModule(module)
-        self.ensure(IR.isValidID(module.name))
-        self.ensure(module.name in module.scope)
-        self.ensure(all(isinstance(e, FunctionDef) for e in module.functions))
-        self.ensure(all(isinstance(e, DataTypeDef) for e in module.datatypes))
-        self.ensure(all(isinstance(e, Module)      for e in module.submodules))
-        self.ensure(all(isinstance(e, ImportedEntity)
-                                             for e in module.importedEntities))
+        try:
+            super().enterModule(module)
+            self.ensure(IR.isValidID(module.name))
+            self.ensure(module.name in module.scope)
+            self.ensure(all( isinstance(e, FunctionDef) for e in module.functions ))
+            self.ensure(all( isinstance(e, DataTypeDef) for e in module.datatypes ))
+            self.ensure(all( isinstance(e, Module)     for e in module.submodules ))
+            self.ensure(all( isinstance(e, ImportedEntity)
+                             for e in module.importedEntities ))
+        except:
+            print('Bad: {}'.format(module))
+            raise
 
     def enterImportedEntity(self, ie):
-        # TODO: Should we also check that name is correctly resolved
-        self.ensure(ie.importedName in self.currentModule.scope)
-        self.ensure(IR.isValidQualifiedName(ie.originModuleName))
-        self.ensure(IR.isValidID(ie.originName))
-        self.ensure(IR.isValidID(ie.importedName))
-        self.ensure(ie.entity is not None)
+        try:
+            # TODO: Should we also check that name is correctly resolved
+            self.ensure(ie.importedName in self.currentModule.scope)
+            self.ensure(IR.isValidQualifiedName(ie.originModuleName))
+            self.ensure(IR.isValidID(ie.originName))
+            self.ensure(IR.isValidID(ie.importedName))
+            self.ensure(ie.entity is not None)
+        except:
+            print('Bad: {}'.format(ie))
+            raise
+
 
     def enterFunctionDef(self, func):
-        self.ensure(func.name in self.currentModule.scope)
-        self.ensure(IR.isValidID(func.name))
-        self.ensure(func.type is not None)
-        self.ensure(func.patternLen is not None)
-        for pattern, expr in func.matchRules:
-            self.ensure(len(pattern) == func.patternLen)
-            self.ensure(all(isinstance(patternExpr, PatternExpr)
-                            for patternExpr in pattern))
-            self.ensure(isinstance(expr, Expr))
+        try:
+            self.ensure(func.name in self.currentModule.scope)
+            self.ensure(IR.isValidID(func.name))
+            self.ensure(func.type is not None)
+            self.ensure(func.patternLen is not None)
+            for pattern, expr in func.matchRules:
+                self.ensure(len(pattern) == func.patternLen)
+                self.ensure(all( isinstance(patternExpr, PatternExpr)
+                                 for patternExpr in pattern ))
+                self.ensure(isinstance(expr, Expr))
+        except:
+            print('Bad: {}'.format(func))
+            raise
+
 
     def enterDataTypeDef(self, datatype):
-        self.ensure(datatype.name in self.currentModule.scope)
-        self.ensure(IR.isValidID(datatype.name))
-        self.ensure(all(IR.isValidID(arg) for arg in datatype.typeArgs))
-        self.ensure(all(isinstance(c, Constructor)
-                    for c in datatype.constructors))
+        try:
+            self.ensure(datatype.name in self.currentModule.scope)
+            self.ensure(IR.isValidID(datatype.name))
+            self.ensure(all( IR.isValidID(arg) for arg in datatype.typeArgs ))
+            self.ensure(all( isinstance(c, Constructor)
+                             for c in datatype.constructors ))
+            self.ensure(all( isinstance(a, TypeVariable)
+                             for a in datatype.argRefs ))
+            self.ensure(len(datatype.typeArgs) == len(datatype.argRefs))
+        except:
+            print('Bad: {}'.format(datatype))
+            raise
 
     def enterConstructor(self, constructor):
-        self.ensure(constructorname in self.currentModule.scope)
-        self.ensure(IR.isValidID(constructor.name))
-        self.ensure(constructor.type is not None)
-        self.ensure(constructor.datatype is not None)
+        try:
+            self.ensure(constructor.name in self.currentModule.scope)
+            self.ensure(IR.isValidID(constructor.name))
+            self.ensure(constructor.type is not None)
+            self.ensure(constructor.datatype is not None)
+        except:
+            print('Bad: {}'.format(constructor))
+            raise
 
     def enterType(self, type):
-        self.ensure(all(IR.isValidID(arg) for arg in type.typeArgs))
-        self.ensure(type.typeExpr is not None)
+        try:
+            self.ensure(all(IR.isValidID(arg) for arg in type.typeArgs))
+            self.ensure(type.typeExpr is not None)
+            self.ensure(len(type.typeArgs) == len(type.argRefs))
+            self.ensure( all(isinstance(arg, TypeVariable)
+                             for arg in type.argRefs ))
+        except:
+            print('Bad: {}'.format(type))
+            raise
 
     def enterTypeExpr(self, typeExpr):
-        self.ensure(IR.isValidQualifiedName(typeExpr.name))
-        self.ensure(typeExpr.typeRef is not None)
-        self.ensure(isinstance(typeExpr.typeRef, DataTypeDef))
-        self.ensure(all(isinstance(arg, TypeExpr)) for arg in typeExpr.args)
+        try:
+            self.ensure(IR.isValidQualifiedName(typeExpr.name))
+            self.ensure(isinstance(typeExpr.typeRef, (DataTypeDef, TypeVariable)))
+            self.ensure(all(isinstance(arg, TypeExpr)) for arg in typeExpr.args)
+        except:
+            print('Bad: {}'.format(typeExpr))
+            raise
 
     def enterExpr(self, expr):
-        self.ensure(IR.isValidQualifiedName(expr.name))
-        self.ensure(expr.funcRef is not None)
-        self.ensure(isinstance(expr.funcRef, (Function, Constructor)))
-        self.ensure(all(isinstance(arg, Expr) for arg in expr.args))
+        try:
+            self.ensure(IR.isValidQualifiedName(expr.name))
+            self.ensure(isinstance(expr.funcRef, (FunctionDef, Constructor, Variable)))
+            self.ensure(all(isinstance(arg, Expr) for arg in expr.args))
+        except:
+            print('Bad: {}'.format(expr))
+            raise
 
     def enterPatternExpr(self, pe):
-        self.ensure(IR.isValidQualifiedPatternName(pe.name))
-        self.ensure(pe.maybeConstructorRef is None
-                    or isinstance(pe.maybeConstructorRef, Constructor))
+        try:
+            self.ensure(IR.isValidQualifiedPatternName(pe.name))
+            self.ensure(isinstance(pe.bindingRef, (Constructor, Variable)))
+            if isinstance(pe.bindingRef, Variable):
+                self.ensure(len(pe.args) == 0)
+        except:
+            print('Bad: {}'.format(pe))
+            raise
 
 
 class NameResolver(EntityVisitorWithModuleStack):
@@ -109,15 +154,26 @@ class NameResolver(EntityVisitorWithModuleStack):
     def exitMatchRule(self, pattern, expr):
         self.variables.pop()
 
-    def enterType(self, type):
+    def _addTypeVariables(self, vars, refs):
         newScope = {}
-        for arg in type.typeArgs:
+        for arg in vars:
+            var = TypeVariable(arg)
             if arg == Variable.placeholder:
                 raise RuntimeError("Placeholder is forbidden in type context")
             if arg in newScope:
                 raise NameError("Name %s is used twice in type arguments" % arg)
-            newScope[arg] = Variable(arg)
+            newScope[arg] = var
+            refs.append(var)
         self.variables.append(newScope)
+
+    def enterDataTypeDef(self, dt):
+        self._addTypeVariables(dt.typeArgs, dt.argRefs)
+
+    def exitDataTypeDef(self, dt):
+        self.variables.pop()
+
+    def enterType(self, type):
+        self._addTypeVariables(type.typeArgs, type.argRefs)
 
     def exitType(self, type):
         self.variables.pop()
@@ -125,17 +181,18 @@ class NameResolver(EntityVisitorWithModuleStack):
     def _tryResolveName(self, name):
         if len(name) == 1:
             maybeVariableName = name[0]
-            if maybeVariableName in self.currentVariables:
-                return self.currentVariables[maybeVariableName]
+            for scope in reversed(self.variables):
+                if maybeVariableName in scope:
+                    return scope[maybeVariableName]
         return IR.walkPath(name, self.currentModule, 0)
 
     def enterTypeExpr(self, typeExpr):
         typeExpr.typeRef = self._tryResolveName(typeExpr.name)
         if typeExpr.typeRef is None:
             raise NameError("Can't resolve name %s in type expression"
-                                % typeExpr.name)
-        if not isinstance(typeExpr.typeRef, (Variable, DataTypeDef)):
-            raise NameError("Name %s doesn't refer to datatype or variable"
+                            % typeExpr.name)
+        if not isinstance(typeExpr.typeRef, (TypeVariable, DataTypeDef)):
+            raise NameError("Name %s doesn't refer to datatype or type variable"
                             % typeExpr.name)
 
     def enterPatternExpr(self, expr):
@@ -145,12 +202,14 @@ class NameResolver(EntityVisitorWithModuleStack):
                 raise RuntimeError("Placeholder binding found")
             if not isinstance(entity, Constructor):
                 raise NameError("Name %s is not a constructor" % expr.name)
-            expr.maybeConstructorRef = entity
+            expr.bindingRef = entity
         elif len(expr.name) == 1: # Then this must be a variable name
             if len(expr.args) > 0:
                 raise NameError("Variable %s can't have arguments in pattern "
                                 + "expression" % variable.name)
             varName = expr.name[0]
+            varRef = Variable(varName)
+            expr.bindingRef = varRef
             if varName != Variable.placeholder:
                 if varName in self.currentVariables:
                     raise NameError("Can't pattern match on same variable %s "
@@ -174,16 +233,22 @@ class ParsedDataExtractor(AHParserVisitor):
     FuncDefMatchRulePart = namedtuple('FuncDefMatchRulePart',
                                       ('name, pattern, expr'))
 
+    class ImportList:
+        def __init__(self, l):
+            self.l = l
+        def __iter__(self):
+            return iter(self.l)
+
     class FuncDefBuilder:
         def __init__(self):
             self.typeParts = []
             self.matchRules = []
 
         def addTypePart(self, typePart):
-            self.typePart.append(typePart)
+            self.typeParts.append(typePart)
 
         def addMatchRulePart(self, matchRule):
-            self.matchRule.append(matchRule)
+            self.matchRules.append(matchRule)
 
         def getFunctions(self):
             funcs = {} # name: String -> FunctionDef
@@ -204,7 +269,7 @@ class ParsedDataExtractor(AHParserVisitor):
                         "Function {} missing a type definition"
                         .format(func.name))
                 funcDef = funcs[matchRule.name]
-                funcDef.matchRules.append(matchRule.pattern, matchRule.expr)
+                funcDef.matchRules.append((matchRule.pattern, matchRule.expr))
 
             for func in funcs.values():
                 if len(func.matchRules) == 0:
@@ -224,13 +289,16 @@ class ParsedDataExtractor(AHParserVisitor):
             return funcs.values()
 
     def _addDefinitionsToModule(self, module, definitions):
+        ImportList = ParsedDataExtractor.ImportList
+
         funcDefBuilder = self.FuncDefBuilder()
         matchType = [
             (Module,                    module.submodules.append),
             (DataTypeDef,               module.datatypes.append),
             (self.FuncDefTypePart,      funcDefBuilder.addTypePart),
             (self.FuncDefMatchRulePart, funcDefBuilder.addMatchRulePart),
-            (ImportedEntity,            module.importedEntities.append)
+            (ImportedEntity,            module.importedEntities.append),
+            (ImportList,                module.importedEntities.extend)
         ]
 
         for definition in definitions:
@@ -250,7 +318,6 @@ class ParsedDataExtractor(AHParserVisitor):
     def visitTopLevelModule(self, ctx:AHParser.TopLevelModuleContext):
         return self.visitModule(ctx)
 
-    # Visit a parse tree produced by AHParser#definitions.
     def visitDefinitions(self, ctx:AHParser.DefinitionsContext):
         for child in ctx.getChildren():
             yield self.visit(child)
@@ -261,93 +328,151 @@ class ParsedDataExtractor(AHParserVisitor):
         self._addDefinitionsToModule(module, self.visit(ctx.definitions()))
         return module
 
-    # Visit a parse tree produced by AHParser#dataDef.
     def visitDataDef(self, ctx:AHParser.DataDefContext):
-        return self.visitChildren(ctx)
+        dt = DataTypeDef(ctx.ID().getText())
+        dt.typeArgs = self.visit(ctx.typeParams())
+        for constructorCtx in ctx.constructorDef():
+            c = self.visit(constructorCtx)
+            c.datatype = dt
+            dt.constructors.append(c)
+        return dt
 
-    # Visit a parse tree produced by AHParser#constructorDef.
     def visitConstructorDef(self, ctx:AHParser.ConstructorDefContext):
-        return self.visitChildren(ctx)
+        c = Constructor(ctx.ID().getText())
+        c.type = self.visit(ctx.typeWithArgs())
+        return c
 
-
-    # Visit a parse tree produced by AHParser#funcTypeDef.
     def visitFuncTypeDef(self, ctx:AHParser.FuncTypeDefContext):
-        return self.visitChildren(ctx)
+        return ParsedDataExtractor.FuncDefTypePart(
+                    name=ctx.ID().getText(),
+                    type=self.visit(ctx.typeWithArgs()))
 
+    def visitTypeWithArgs(self, ctx:AHParser.TypeWithArgsContext):
+        t = Type()
+        typeParams = ctx.typeParams()
+        if typeParams is not None:
+            t.typeArgs = self.visit(typeParams)
+        t.typeExpr = self.visit(ctx.typeExpr())
+        assert t.typeExpr is not None
+        return t
 
-    # Visit a parse tree produced by AHParser#funcDef.
     def visitFuncDef(self, ctx:AHParser.FuncDefContext):
-        return self.visitChildren(ctx)
+        name = ctx.ID().getText()
+        pattern = list(map(self.visit, ctx.pattern()))
+        expr = self.visit(ctx.expr())
+        return ParsedDataExtractor.FuncDefMatchRulePart(
+                    name=name, pattern=pattern, expr=expr)
 
+    # def visitImportStmt(self, ctx:AHParser.ImportStmtContext):
+    #     return self.visitChildren(ctx)
 
-    # Visit a parse tree produced by AHParser#importStmt.
-    def visitImportStmt(self, ctx:AHParser.ImportStmtContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by AHParser#moduleImport.
     def visitModuleImport(self, ctx:AHParser.ModuleImportContext):
-        return self.visitChildren(ctx)
+        ie = ImportedEntity()
+        ie.originModuleName = self.visit(ctx.qualifiedName())
+        ie.originName = ie.originModuleName[-1]
+        renaming = ctx.ID()
+        assert len(renaming) == 0 or len(renaming) == 2
+        if len(renaming) == 0:
+            ie.importedName = ie.originName
+        elif len(renaming) == 2:
+            asWord, importedName = renaming
+            if asWord != 'as':
+                raise SyntaxError("Unexpected token {} when 'as' was expected "
+                                  + "in module import context"
+                                  .format(asWord))
+            ie.importedName = importedName
 
+        return ie
 
-    # Visit a parse tree produced by AHParser#entityImport.
     def visitEntityImport(self, ctx:AHParser.EntityImportContext):
-        return self.visitChildren(ctx)
+        imports = []
+        originModuleName = self.visit(ctx.qualifiedName)
 
+        for importedNameCtx in ctx.importedName():
+            ie = ImportedEntity()
+            ie.originModuleName = originModuleName
+            ie.originName, ie.importedName = self.visit(importedNameCtx)
+            imports.append(ie)
 
-    # Visit a parse tree produced by AHParser#importedName.
-    def visitImportedName(self, ctx:AHParser.ImportedNameContext):
-        return self.visitChildren(ctx)
+        return ParsedDataExtractor.ImportList(imports)
 
+    def visitPreserveNameImport(self, ctx:AHParser.PreserveNameImportContext):
+        name = ctx.ID().getText()
+        return (name, name)
 
-    # Visit a parse tree produced by AHParser#typeExpr.
-    def visitTypeExpr(self, ctx:AHParser.TypeExprContext):
-        return self.visitChildren(ctx)
+    def visitRenamingImport(self, ctx:AHParser.RenamingImportContext):
+        name, asWord, importedName = map(lambda t: t.getText(), ctx.ID())
+        if asWord != 'as':
+                raise SyntaxError("Unexpected token {} when 'as' was expected "
+                                  + "in entity import context"
+                                  .format(asWord))
+        return (name, importedName)
 
+    def visitConcrTypeExpr(self, ctx:AHParser.ConcrTypeExprContext):
+        return self.visit(ctx.concreteType())
 
-    # Visit a parse tree produced by AHParser#typeParams.
+    def visitArrowTypeExpr(self, ctx:AHParser.ArrowTypeExprContext):
+        te = TypeExpr(['_→_'])
+        te.args = list(map(self.visit, ctx.typeExpr()))
+        return te
+
+    def visitParenTypeExpr(self, ctx:AHParser.ParenTypeExprContext):
+        return self.visit(ctx.typeExpr())
+
     def visitTypeParams(self, ctx:AHParser.TypeParamsContext):
-        return self.visitChildren(ctx)
+        return list(map(lambda t: t.getText(), ctx.ID()))
 
-
-    # Visit a parse tree produced by AHParser#concreteType.
     def visitConcreteType(self, ctx:AHParser.ConcreteTypeContext):
-        return self.visitChildren(ctx)
+        te = TypeExpr(self.visit(ctx.qualifiedName()))
+        te.args = list(map(self.visit, ctx.typeArg()))
+        return te
 
+    def visitNameTypeArg(self, ctx:AHParser.NameTypeArgContext):
+        return TypeExpr(self.visit(ctx.qualifiedName()))
 
-    # Visit a parse tree produced by AHParser#typeArg.
-    def visitTypeArg(self, ctx:AHParser.TypeArgContext):
-        return self.visitChildren(ctx)
+    def visitParenTypeArg(self, ctx:AHParser.ParenTypeArgContext):
+        return self.visit(ctx.typeExpr())
 
+    def visitNamePattern(self, ctx:AHParser.NamePatternContext):
+        return PatternExpr(self.visit(ctx.qualifiedName()))
 
-    # Visit a parse tree produced by AHParser#pattern.
-    def visitPattern(self, ctx:AHParser.PatternContext):
-        return self.visitChildren(ctx)
+    def visitPlaceHolderPattern(self, ctx:AHParser.PlaceHolderPatternContext):
+        return PatternExpr([ Variable.placeholder ])
 
+    def visitParenPattern(self, ctx:AHParser.ParenPatternContext):
+        return self.visit(ctx.patternExpr())
 
-    # Visit a parse tree produced by AHParser#patternArg.
-    def visitPatternArg(self, ctx:AHParser.PatternArgContext):
-        return self.visitChildren(ctx)
+    def visitNormalPatternExpr(self, ctx:AHParser.NormalPatternExprContext):
+        pe = PatternExpr(self.visit(ctx.qualifiedName()))
+        pe.args = list(map(self.visit, ctx.pattern()))
+        return pe
 
+    def visitParenPatternExpr(self, ctx:AHParser.ParenPatternExprContext):
+        pe = self.visit(ctx.patternExpr())
+        pe.args.extend(map(self.visit, ctx.pattern()))
+        return pe
 
-    # Visit a parse tree produced by AHParser#expr.
     def visitExpr(self, ctx:AHParser.ExprContext):
-        return self.visitChildren(ctx)
+        return self.visitChildren(ctx) # visit functionExpr
 
+    def visitNormalFunctionExpr(self, ctx:AHParser.NormalFunctionExprContext):
+        expr = Expr(self.visit(ctx.qualifiedName()))
+        expr.args = list(map(self.visit, ctx.funcArg()))
+        return expr
 
-    # Visit a parse tree produced by AHParser#functionExpr.
-    def visitFunctionExpr(self, ctx:AHParser.FunctionExprContext):
-        return self.visitChildren(ctx)
+    def visitParenFunctionExpr(self, ctx:AHParser.ParenFunctionExprContext):
+        expr = self.visit(ctx.functionExpr())
+        expr.args.extend(map(self.visit, ctx.funcArg()))
+        return expr
 
+    def visitNameFuncArg(self, ctx:AHParser.NameFuncArgContext):
+        return Expr(self.visit(ctx.qualifiedName()))
 
-    # Visit a parse tree produced by AHParser#funcArg.
-    def visitFuncArg(self, ctx:AHParser.FuncArgContext):
-        return self.visitChildren(ctx)
+    def visitParenFuncArg(self, ctx:AHParser.ParenFuncArgContext):
+        return self.visit(ctx.expr())
 
-
-    # Visit a parse tree produced by AHParser#qualifiedName.
     def visitQualifiedName(self, ctx:AHParser.QualifiedNameContext):
-        return self.visitChildren(ctx)
+        return list(map(lambda t: t.getText(), ctx.ID()))
 
 
 class IRBuilder:
@@ -355,20 +480,43 @@ class IRBuilder:
         self.readonly = False
         # TODO: maybe add module named "{-builtins-}?
         self.modules = {} # name:String -> Module
+        self.addModule(self.builtinsModule())
 
     def checkReadonly(self):
         if self.readonly:
             raise RuntimeError("IRBuilder shouldn't be used after construction")
 
+    @staticmethod
+    def builtinsModule():
+        builtinsModule = Module(IR.BUILTINS_MODULE_NAME)
+        arrow_type = DataTypeDef('_→_')
+        arrow_type.typeArgs = ['a', 'b']
+        builtinsModule.datatypes.append(arrow_type)
+        return builtinsModule
+
+    def addModule(self, module):
+        self.checkReadonly()
+        if module.name != IR.BUILTINS_MODULE_NAME:
+            # Import everything from builtins module
+            builtinsModule = self.modules[IR.BUILTINS_MODULE_NAME]
+            for entity in builtinsModule.entities:
+                ie = ImportedEntity()
+                ie.originModuleName = [builtinsModule.name]
+                ie.originName = entity.name
+                ie.importedName = entity.name
+                ie.entity = entity
+                module.importedEntities.append(ie)
+        self.modules[module.name] = module
+
     # (TODO) a place for future improvements
     # Maybe add a package from wich module is from as argument (can be modeled
     # as submodules)
-    def addModule(self, parser):
+    def parseModule(self, parser):
         self.checkReadonly()
         extractor = ParsedDataExtractor()
         parseTree = parser.topLevelModule()
         module = extractor.visit(parseTree)
-        self.modules[module.name] = module
+        self.addModule(module)
 
     def makeIR(self):
         if self.readonly:
@@ -482,11 +630,15 @@ class IRBuilder:
 
 
 class IR:
+    BUILTINS_MODULE_NAME = "{-builtins-}"
+
     def __init__(self, modules):
         self.modules = modules # name:String -> Module
 
     def __eq__(self, other):
-        return isinstance(other, IR) and self.modules == other.modules
+        if not isinstance(other, IR):
+            return False
+        return Entity.compareAttr(self.modules, other.modules, set())
 
     def __repr__(self):
         return "IR(modules={})".format(repr(self.modules))
@@ -517,7 +669,7 @@ class IR:
     @staticmethod
     def walkPath(path, entity, i):
         # ImportedEntities are transperent
-        # There might loops in graph. We'll move entity reference two times
+        # There might be loops in graph. We'll move entity reference two times
         # faster than slowPointerBehind and if they ever become equal then it
         # means there is a loop.
         slowPointerBehind = entity
