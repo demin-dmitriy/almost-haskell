@@ -1,0 +1,92 @@
+module Prelude where
+
+-- Special type that is subtype of any type (efficiently is equal to ⊥ ?).
+-- Requires special rules for type checking.
+-- Constructor must not be used anywhere except for patterns.
+-- Can be used to implement strictness.
+
+-- Arrow type constructor is used to define function type. Used internally.
+-- We won't be able to define any function type without this.
+data _→_ a b where
+
+data Any where
+    strict : Any
+
+-- Unit type. Used internally to define IO ⊤ instances
+data ⊤ where
+    [] : ⊤
+
+-- Primitive values that are implemented internally. Constructors for them
+-- are generated implicitly when literals are used.
+data Int where   -- Int is not implemented yet
+data Char where
+data Float where -- Float is not implemented yet
+
+-- Input-Output monad. Used internally for IO functions
+data IO a where
+
+-- These functions are implemented internally. Names can be changed. Types
+-- provided for type checker.
+returnIO : a ⇒ a → IO a
+bindIO : a b ⇒ IO a → (a → IO b) → b
+putChar : Char → IO ⊤
+getChar : IO Char
+
+undefined : a ⇒ a
+undefined = undefined
+
+seq : a b ⇒ a → b → b
+seq strict _ = undefined 
+    -- ^ Shouldn't match ever (possibly change result to error)
+    -- Tricks pattern matching into evaluation WHNF of first argument.
+    -- Currently there is a bug when using strict with IO.
+seq _ x = x
+
+
+-- TODO: implement error reporting
+--error : Any -- TODO: not sure about this type
+--error msg = print msg
+
+-- Pragma syntax:
+--
+-- Imports this name in every module
+-- pragma BUILTIN <entity name>
+--
+-- Hide module from the world (If it doesn't have any pragmas then it useless)
+-- Not needed for now thus not implemented
+-- pragma HIDDEN_MODULE <module name>
+--
+-- Disallowes entity name to be used in expressions. (Can be used to implement
+-- strictness)
+-- pragma FORBID_IN_EXPR <entity name>
+--
+-- Turns type into a wildcard (can be used to trick pattern matching)
+-- pragma ANY_TYPE <type name>
+--
+-- Makes entity implementation to be defined by compiler itself
+-- pragma Internal <entity name> <internal builtin name>
+
+pragma FORBID_IN_EXPR strict
+pragma ANY_TYPE Any
+
+pragma BUILTIN _→_
+pragma BUILTIN strict
+pragma BUILTIN seq
+pragma BUILTIN IO
+pragma BUILTIN Int
+pragma BUILTIN Char
+pragma BUILTIN Float
+--pragma BUILTIN List
+--pragma BUILTIN Cons
+--pragma BUILTIN Nil
+pragma BUILTIN putChar 
+pragma BUILTIN getChar
+pragma BUILTIN returnIO
+pragma BUILTIN bindIO
+pragma BUILTIN ⊤
+pragma BUILTIN []
+
+pragma INTERNAL returnIO RETURN_IO
+pragma INTERNAL bindIO   BIND_IO
+pragma INTERNAL putChar  PUT_CHAR
+pragma INTERNAL getChar  GET_CHAR

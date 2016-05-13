@@ -42,6 +42,8 @@ Underscore : '_' ;
 
 Colon : ':' ;
 
+Pragma : 'pragma' ;
+
 // Something crazy like "->=∀x_:⊥]{-→2₂--" is a valid identifier 
 // Unfortunately, to overcome limitations of antlr4 we need to explicitly forbid
 // identifiers that start with "{-" but still allow identifiers like "{abc" or

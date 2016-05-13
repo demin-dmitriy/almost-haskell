@@ -1,5 +1,5 @@
-# TODO: qualify imports
 from collections import namedtuple
+import re
 
 from AHParserVisitor import AHParserVisitor
 from CompilerException import CompilerException, NameError
@@ -7,8 +7,10 @@ from IREntityVisitor import EntityVisitor, EntityVisitorWithModuleStack
 from AHParser import AHParser
 from IREntity import Module, ImportedEntity, FunctionDef, TypeVariable, \
                      DataTypeDef, Constructor, Type, TypeExpr, Variable, Expr, \
-                     PatternExpr, TypeVariable
-
+                     PatternExpr, TypeVariable, Pragma, InternalFunction, \
+                     Function, Entity
+from AHBuiltinFunctionsFactory import getBuiltin
+import AHBuiltinFunctions
 
 class SyntaxError(CompilerException):
     pass
@@ -36,7 +38,8 @@ class EntityValidator(EntityVisitorWithModuleStack):
             super().enterModule(module)
             self.ensure(IR.isValidID(module.name))
             self.ensure(module.name in module.scope)
-            self.ensure(all( isinstance(e, FunctionDef) for e in module.functions ))
+            self.ensure(all( isinstance(e, (FunctionDef, InternalFunction))
+                             for e in module.functions ))
             self.ensure(all( isinstance(e, DataTypeDef) for e in module.datatypes ))
             self.ensure(all( isinstance(e, Module)     for e in module.submodules ))
             self.ensure(all( isinstance(e, ImportedEntity)
@@ -73,6 +76,17 @@ class EntityValidator(EntityVisitorWithModuleStack):
             print('Bad: {}'.format(func))
             raise
 
+    def enterInternalFunction(self, func):
+        try:
+            self.ensure(func.name in self.currentModule.scope)
+            self.ensure(IR.isValidID(func.name))
+            self.ensure(func.type is not None)
+            self.ensure(len(func.depsNames) == len(func.deps))
+            self.ensure(all( isinstance(e, Entity)
+                             for e in func.deps.values() ))
+        except:
+            print('Bad: {}'.format(func))
+            raise
 
     def enterDataTypeDef(self, datatype):
         try:
@@ -121,7 +135,7 @@ class EntityValidator(EntityVisitorWithModuleStack):
     def enterExpr(self, expr):
         try:
             self.ensure(IR.isValidQualifiedName(expr.name))
-            self.ensure(isinstance(expr.funcRef, (FunctionDef, Constructor, Variable)))
+            self.ensure(isinstance(expr.funcRef, (Function, Constructor, Variable)))
             self.ensure(all(isinstance(arg, Expr) for arg in expr.args))
         except:
             print('Bad: {}'.format(expr))
@@ -143,10 +157,22 @@ class NameResolver(EntityVisitorWithModuleStack):
         super().__init__()
         # locals: Name -> Entity
         self.variables = [{}]
+        self.charDatatype = None
 
     @property
     def currentVariables(self):
         return self.variables[-1]
+
+    def enterModule(self, module):
+        super().enterModule(module)
+        self.charDatatype = self._tryResolveName(['Char'])
+        if self.charDatatype is None:
+            raise CompilerException("Char datatype is not defined in module {}"
+                                    .format(module.name))
+
+    def exitModule(self, module):
+        super().exitModule(module)
+        self.charDatatype = None
 
     def enterMatchRule(self, pattern, expr):
         self.variables.append({}) # Add new scope
@@ -186,6 +212,14 @@ class NameResolver(EntityVisitorWithModuleStack):
                     return scope[maybeVariableName]
         return IR.walkPath(name, self.currentModule, 0)
 
+    def enterInternalFunction(self, func):
+        for name in func.depsNames:
+            ref = self._tryResolveName(name)
+            if ref is None:
+                raise NameError("Can't resolve dependency {} of internal "
+                                " function {}".format(name, func.name))
+            func.deps[tuple(name)] = ref
+
     def enterTypeExpr(self, typeExpr):
         typeExpr.typeRef = self._tryResolveName(typeExpr.name)
         if typeExpr.typeRef is None:
@@ -196,6 +230,10 @@ class NameResolver(EntityVisitorWithModuleStack):
                             % typeExpr.name)
 
     def enterPatternExpr(self, expr):
+        expr.bindingRef = self._tryMakeChar(expr.name)
+        if expr.bindingRef is not None:
+            return
+
         entity = IR.walkPath(expr.name, self.currentModule, 0)
         if entity is not None: # Then this must be a constructor
             if expr.name == Variable.placeholder:
@@ -206,25 +244,52 @@ class NameResolver(EntityVisitorWithModuleStack):
         elif len(expr.name) == 1: # Then this must be a variable name
             if len(expr.args) > 0:
                 raise NameError("Variable %s can't have arguments in pattern "
-                                + "expression" % variable.name)
+                                "expression" % variable.name)
             varName = expr.name[0]
             varRef = Variable(varName)
             expr.bindingRef = varRef
             if varName != Variable.placeholder:
                 if varName in self.currentVariables:
                     raise NameError("Can't pattern match on same variable %s "
-                                    + "twice" % varName)
-                self.currentVariables[varName] = Variable(varName)
+                                    "twice" % varName)
+                self.currentVariables[varName] = varRef
         else:
             raise NameError("Can't find constructor %s" % expr.name)
 
+    def _isCharLiteral(self, name):
+        return len(name) == 1 and re.fullmatch("'.'", name[0]) is not None
+
+
+    def _tryMakeChar(self, name):
+        literal = name[0]
+
+        if literal == "'\\n'":
+            charValue = '\n'
+        elif literal == "'\\s'":
+            charValue = ' '
+        elif re.fullmatch("'.'", literal) is not None:
+            charValue = literal[1:-1]
+        else:
+            return None
+
+        return AHBuiltinFunctions.CharConstructor(
+                    self.charDatatype,
+                    charValue)
+
     def enterExpr(self, expr):
+        expr.funcRef =  self._tryMakeChar(expr.name)
+        if expr.funcRef is not None:
+            return
+
         expr.funcRef = self._tryResolveName(expr.name)
         if expr.funcRef is None:
             raise NameError("Can't resolve name %s in expression" % expr.name)
-        if not isinstance(expr.funcRef, (FunctionDef, Constructor, Variable)):
+        if not isinstance(expr.funcRef, (Function, Constructor, Variable)):
             raise NameError("Name %s does not refer to function, constructor "
-                            + " or variable" % expr.name)
+                            " or variable" % expr.name)
+        if 'FORBID_IN_EXPR' in expr.funcRef.pragmaTags:
+            raise NameError("Name %s can't be used in expressions because of "
+                            "pragma" % expr.name)
 
 
 class ParsedDataExtractor(AHParserVisitor):
@@ -243,12 +308,19 @@ class ParsedDataExtractor(AHParserVisitor):
         def __init__(self):
             self.typeParts = []
             self.matchRules = []
+            self.builtins = {} # Name -> BuiltinName
 
         def addTypePart(self, typePart):
             self.typeParts.append(typePart)
 
         def addMatchRulePart(self, matchRule):
             self.matchRules.append(matchRule)
+
+        def makeBuiltin(self, name, builtinName):
+            if name in self.builtins:
+                raise NameError("Can't make function {} builtin twice"
+                                .format(name))
+            self.builtins[name] = builtinName
 
         def getFunctions(self):
             funcs = {} # name: String -> FunctionDef
@@ -258,8 +330,16 @@ class ParsedDataExtractor(AHParserVisitor):
                     raise NameError(
                         "Type of function {} has already been definied"
                         .format(func.name))
-                funcDef = FunctionDef(func.name)
-                funcDef.type = func.type
+                if func.name in self.builtins:
+                    try:
+                        Builtin = getBuiltin(self.builtins[func.name])
+                    except KeyError:
+                        raise NameError('Builtin {} was not found'
+                                        .format(self.builtins[func.name]))
+                    funcDef = Builtin(name=func.name, type=func.type)
+                else:
+                    funcDef = FunctionDef(func.name)
+                    funcDef.type = func.type
                 funcs[func.name] = funcDef
 
             # Note: this preserves order of match rules
@@ -268,10 +348,16 @@ class ParsedDataExtractor(AHParserVisitor):
                     raise NameError(
                         "Function {} missing a type definition"
                         .format(func.name))
+                if isinstance(funcs[matchRule.name], InternalFunction):
+                    raise NameError("Internal function {} can't have pattern "
+                                    "matching rules".format(matchRule.name))
                 funcDef = funcs[matchRule.name]
                 funcDef.matchRules.append((matchRule.pattern, matchRule.expr))
 
             for func in funcs.values():
+                if isinstance(func, InternalFunction):
+                    continue
+
                 if len(func.matchRules) == 0:
                     # TODO: I don't know if this should count as error or not
                     #       Maybe if I am not going to check that function is
@@ -283,7 +369,7 @@ class ParsedDataExtractor(AHParserVisitor):
                     if not all(len(pattern) == patternLen 
                                for pattern, _ in func.matchRules):
                         raise SyntaxError("Different number of pattern matched "
-                                          + "arguments in function {}"
+                                          "arguments in function {}"
                                           .format(func.name))
 
             return funcs.values()
@@ -292,13 +378,21 @@ class ParsedDataExtractor(AHParserVisitor):
         ImportList = ParsedDataExtractor.ImportList
 
         funcDefBuilder = self.FuncDefBuilder()
+
+        def processPragma(pragma):
+            if pragma.kind == 'INTERNAL':
+                funcDefBuilder.makeBuiltin(pragma.entityName,
+                                           pragma.builtinName)
+            module.pragmas.append(pragma)
+
         matchType = [
             (Module,                    module.submodules.append),
             (DataTypeDef,               module.datatypes.append),
             (self.FuncDefTypePart,      funcDefBuilder.addTypePart),
             (self.FuncDefMatchRulePart, funcDefBuilder.addMatchRulePart),
             (ImportedEntity,            module.importedEntities.append),
-            (ImportList,                module.importedEntities.extend)
+            (ImportList,                module.importedEntities.extend),
+            (Pragma,                    processPragma)
         ]
 
         for definition in definitions:
@@ -363,8 +457,13 @@ class ParsedDataExtractor(AHParserVisitor):
         return ParsedDataExtractor.FuncDefMatchRulePart(
                     name=name, pattern=pattern, expr=expr)
 
+    # TODO: I don't remember, why it's commented
     # def visitImportStmt(self, ctx:AHParser.ImportStmtContext):
     #     return self.visitChildren(ctx)
+
+    def visitPragmaStmt(self, ctx:AHParser.PragmaStmtContext):
+        words = list(map(lambda t: t.getText(), ctx.ID()))
+        return Pragma(words=words)
 
     def visitModuleImport(self, ctx:AHParser.ModuleImportContext):
         ie = ImportedEntity()
@@ -378,7 +477,7 @@ class ParsedDataExtractor(AHParserVisitor):
             asWord, importedName = renaming
             if asWord != 'as':
                 raise SyntaxError("Unexpected token {} when 'as' was expected "
-                                  + "in module import context"
+                                  "in module import context"
                                   .format(asWord))
             ie.importedName = importedName
 
@@ -386,7 +485,7 @@ class ParsedDataExtractor(AHParserVisitor):
 
     def visitEntityImport(self, ctx:AHParser.EntityImportContext):
         imports = []
-        originModuleName = self.visit(ctx.qualifiedName)
+        originModuleName = self.visit(ctx.qualifiedName())
 
         for importedNameCtx in ctx.importedName():
             ie = ImportedEntity()
@@ -404,7 +503,7 @@ class ParsedDataExtractor(AHParserVisitor):
         name, asWord, importedName = map(lambda t: t.getText(), ctx.ID())
         if asWord != 'as':
                 raise SyntaxError("Unexpected token {} when 'as' was expected "
-                                  + "in entity import context"
+                                  "in entity import context"
                                   .format(asWord))
         return (name, importedName)
 
@@ -475,37 +574,39 @@ class ParsedDataExtractor(AHParserVisitor):
         return list(map(lambda t: t.getText(), ctx.ID()))
 
 
+# TODO: readonly is not ideal. Shouldn't work like that.
 class IRBuilder:
     def __init__(self):
         self.readonly = False
-        # TODO: maybe add module named "{-builtins-}?
-        self.modules = {} # name:String -> Module
-        self.addModule(self.builtinsModule())
+        self.modules = {}  # name:String -> Module
+        # Entities that are added to scope of every module in modules
+        self.builtins = [] # List of Entity
 
     def checkReadonly(self):
         if self.readonly:
             raise RuntimeError("IRBuilder shouldn't be used after construction")
 
-    @staticmethod
-    def builtinsModule():
-        builtinsModule = Module(IR.BUILTINS_MODULE_NAME)
-        arrow_type = DataTypeDef('_→_')
-        arrow_type.typeArgs = ['a', 'b']
-        builtinsModule.datatypes.append(arrow_type)
-        return builtinsModule
+    def processPragmas(self, module):
+        tempScope = { e.name: e for e in module.entities }
+        tempScope[module.name] = module
+
+        for pragma in module.pragmas:
+            if hasattr(pragma, 'entityName'):
+                if not pragma.entityName in tempScope:
+                    raise NameError('Entity {} (referenced in pragma) not in '
+                                    'module scope'.format(pragma.entityName))
+            tempScope[pragma.entityName].pragmaTags.append(pragma.kind)
+
+        for submodule in module.submodules:
+            self.processPragmas(submodule)
 
     def addModule(self, module):
         self.checkReadonly()
-        if module.name != IR.BUILTINS_MODULE_NAME:
-            # Import everything from builtins module
-            builtinsModule = self.modules[IR.BUILTINS_MODULE_NAME]
-            for entity in builtinsModule.entities:
-                ie = ImportedEntity()
-                ie.originModuleName = [builtinsModule.name]
-                ie.originName = entity.name
-                ie.importedName = entity.name
-                ie.entity = entity
-                module.importedEntities.append(ie)
+        self.processPragmas(module)
+
+        for e in module.entities:
+            if 'BUILTIN' in e.pragmaTags: self.builtins.append(e)
+
         self.modules[module.name] = module
 
     # (TODO) a place for future improvements
@@ -522,7 +623,7 @@ class IRBuilder:
         if self.readonly:
             return IR(self.modules)
         for module in self.modules.values():
-            module.populateScope()
+            module.populateScope(self.builtins)
         self.resolveImports()
         self.resolveNames()
         self.validate()
@@ -534,7 +635,7 @@ class IRBuilder:
         if not IR.isValidQualifiedName(qualifiedModuleName):
             raise BadIR("Invalid qualified name {}".format(qualifiedModuleName))
 
-        module = IR.walk(qualifiedModuleName, fromModule, 0)
+        module = IR.walkPath(qualifiedModuleName, fromModule, 0)
         if isinstance(module, Module):
             return module
 
@@ -542,7 +643,7 @@ class IRBuilder:
         topModuleName = qualifiedModuleName[0]
         if topModuleName in self.modules:
             module = IR.walkPath(qualifiedModuleName,
-                                 self.modules[moduleName], 1)
+                                 self.modules[topModuleName], 1)
             if isinstance(module, Module):
                 return module
         return None
@@ -575,7 +676,7 @@ class IRBuilder:
         while len(unresolvedImports) != 0:
             anImportWasResolved = False
 
-            for module, importedEntity in unresolvedImports:
+            for module, importedEntity in list(unresolvedImports):
                 # Try to resolve a name
                 originModule = self.getModule(importedEntity.originModuleName,
                                               module)
@@ -585,7 +686,7 @@ class IRBuilder:
 
                 if importedEntity.originName not in originModule.scope:
                     raise ImportError("Name {} isn't exported by module {} "
-                                      + "(required by {})"
+                                      "(required by {})"
                                       .format(importedEntity.name,
                                               importedEntity.originModuleName,
                                               module.name))
@@ -630,8 +731,6 @@ class IRBuilder:
 
 
 class IR:
-    BUILTINS_MODULE_NAME = "{-builtins-}"
-
     def __init__(self, modules):
         self.modules = modules # name:String -> Module
 
@@ -681,7 +780,7 @@ class IR:
             entity = entity.entity
             if slowPointerBehind == entity:
                 raise ImportError("Path {} can't be resolved: cyclic imports "
-                                  + "are detected at {}".format(path, i))
+                                  "are detected at {}".format(path, i))
 
         if i == len(path):
             return entity

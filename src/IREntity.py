@@ -7,6 +7,10 @@ class Entity:
     entityKind = '(abstract entity)'
     _attrnames = None
 
+    def __init__(self):
+        # TODO: not sure what is best way to represent this
+        self.pragmaTags = []
+
     @staticmethod
     def compareAttr(left, right, visitedSet):
         if type(left) is not type(right):
@@ -39,7 +43,6 @@ class Entity:
         raise NotImplementedError("attributes have unknown type {}"
                                   .format(type(left)))
 
-
     # Equality that handles cyclic references
     def equals(self, other, visitedSet=None):
         assert self._attrnames is not None and other._attrnames is not None
@@ -71,6 +74,41 @@ class Entity:
         return "{}({})".format(self.entityKind, props)
 
 
+class Pragma:
+    pragmaKinds = [
+        ('BUILTIN', 'entityName'),
+        ('HIDDEN_MODULE', 'entityName'),
+        ('ANY_TYPE', 'entityName'),
+        ('INTERNAL', 'entityName', 'builtinName'),
+        ('FORBID_IN_EXPR', 'entityName')
+    ]
+
+    def __init__(self, words):
+        if len(words) < 1:
+            raise CompilerException('Not a pragma')
+
+        self.words = words
+        self.kind = words[0]
+        self.args = words[1:]
+
+        for pragmaKind in self.pragmaKinds:
+            kind = pragmaKind[0]
+
+            if kind == self.kind:
+                argNames = pragmaKind[1:]
+                if len(argNames) != len(self.args):
+                    raise CompilerException('Pragma %s has wrong number of '
+                                            'arguments' % self)
+                for arg, argName, in zip(self.args, argNames):
+                    setattr(self, argName, arg)
+                break
+        else:
+            raise CompilerException('Unknown pragma %s' % self)
+
+    def __str__(self):
+        return "Pragma({})".format(self.words)
+
+
 # (TODO) State of the current things is far from ideal
 # There several stages that Entity hierarchy is undergoing^
 #   1.   Collect all information about functions datatypes, modules, imports
@@ -97,6 +135,7 @@ class Module(Entity):
     _attrnames = ('name', 'scope')
 
     def __init__(self, name=None):
+        super().__init__()
         self.name = name        # String
         # All names (unqualified) in scope, including imported ones and module
         # itself. scope is used for name resolution
@@ -110,6 +149,7 @@ class Module(Entity):
         self.datatypes = []        # List of DataTypeDef
         self.submodules = []       # List of Module
         self.importedEntities = [] # List of ImportedEntity
+        self.pragmas = []          # List of Pragma
 
     # TODO: (stopped here). The correct solution is probably to rework class
     # hierarchy. But more quick and to the point one will be to just make and
@@ -128,39 +168,44 @@ class Module(Entity):
         return chain(self.functions,
                      self.datatypes,
                      self.importedEntities,
-                     self.submodules) 
+                     self.submodules,
+                     (c for d in self.datatypes for c in d.constructors))
     
 
     def addEntityToScope(self, e):
         if e.name in self.scope:
-            raise NameError("Name {}({}) was already defined as {}"
-                            .format(e.name,
-                                    e.entityKind,
-                                    self.scope[e.name].entityKind))
+            if id(e) != id(self.scope[e.name]):
+                raise NameError("Name {}({}) was already defined as {}"
+                                .format(e.name,
+                                        e.entityKind,
+                                        self.scope[e.name].entityKind))
+            return
         self.scope[e.name] = e
 
     def visit(self, visitor):
         visitor.enterModule(self)
-        for e in self.entities:
+        for e in chain(self.functions,
+                       self.datatypes,
+                       self.importedEntities,
+                       self.submodules):
             e.visit(visitor)
         visitor.exitModule(self)
 
-    def populateScope(self):
-        self._addModuleEntitiesToScope()
+    def populateScope(self, builtins):
+        self._addModuleEntitiesToScope(builtins)
         self._propagateScopeFromParent(self)
 
-    def _addModuleEntitiesToScope(self):
+    def _addModuleEntitiesToScope(self, builtins):
+        for e in builtins:
+            self.addEntityToScope(e)
+
         self.addEntityToScope(self)
 
         for e in self.entities:
             self.addEntityToScope(e)
 
-        for datatype in self.datatypes:
-            for constructor in datatype.constructors:
-                self.addEntityToScope(constructor)
-
         for module in self.submodules:
-            module._addModuleEntitiesToScope()
+            module._addModuleEntitiesToScope(builtins)
 
     # Called after _addModuleEntitiesToScope
     def _propagateScopeFromParent(self, parent):
@@ -175,6 +220,7 @@ class ImportedEntity(Entity):
     entityKind = 'ImportedEntity'
 
     def __init__(self):
+        super().__init__()
         self.originModuleName = None # QualifiedName
         self.originName = None       # String
         self.importedName = None     # String
@@ -191,13 +237,30 @@ class ImportedEntity(Entity):
         visitor.exitImportedEntity(self)
 
 
-class FunctionDef(Entity):
+class Function(Entity):
+    def __init__(self, name=None, type=None):
+        super().__init__()
+        self.name = name # String
+        self.type = type # Type
+
+    # args should be fully resolved
+    def withAppliedArgs(self, args):
+        expr = Expr([self.name])
+        expr.funcRef = self
+        expr.args = args
+        return expr
+
+    def visit(self, visitor):
+        if self.type is not None:
+            self.type.visit(visitor)
+
+
+class FunctionDef(Function):
     entityKind = 'Function'
     _attrnames = ('name', 'type', 'patternLen', 'matchRules')
 
-    def __init__(self, name=None):
-        self.name = name       # String
-        self.type = None       # Type
+    def __init__(self, name=None, type=None):
+        super().__init__(name, type)
         self.patternLen = None # int
         self.matchRules = []   # List of (List of PatternExpr, Expr)
                                # Note: order of match rules is important
@@ -205,10 +268,7 @@ class FunctionDef(Entity):
 
     def visit(self, visitor):
         visitor.enterFunctionDef(self)
-        if self.type is not None:
-            self.type.visit(visitor)
-
-        # TODO: Submodule handling is incorrect
+        super().visit(visitor)
 
         for pattern, expr in self.matchRules:
             visitor.enterMatchRule(pattern, expr)
@@ -216,7 +276,28 @@ class FunctionDef(Entity):
                 patternExpr.visit(visitor)
             expr.visit(visitor)
             visitor.exitMatchRule(pattern, expr)
+
         visitor.exitFunctionDef(self)
+
+class InternalFunction(Function):
+    entityKind = 'InternalFunction'
+    _attrnames = ('name', 'type', 'deps')
+
+    def __init__(self, name=None, type=None):
+        super().__init__(name, type)
+        self.depsNames = [] # List of QualifiedName
+        self.deps = {}      # QualifiedName (as tuple) → Entity
+
+    def llvmImpl(self):
+        raise NotImplementedError()
+
+    def interpreterImpl(self, args): # Returns instance of LazyExpr
+        raise NotImplementedError()
+
+    def visit(self, visitor):
+        visitor.enterInternalFunction(self)
+        super().visit(visitor)
+        visitor.exitInternalFunction(self)
 
 
 class TypeVariable(Entity):
@@ -224,6 +305,7 @@ class TypeVariable(Entity):
     _attrnames = ('name',)
 
     def __init__(self, name=None):
+        super().__init__()
         self.name = name
 
 
@@ -234,10 +316,18 @@ class DataTypeDef(Entity):
     _attrnames = ('name', 'typeArgs', 'argRefs', 'constructors')
 
     def __init__(self, name=None):
+        super().__init__()
         self.name = name       # String
         self.typeArgs = []     # List of String
         self.argRefs = []      # List of TypeVariable
         self.constructors = [] # List of Constructor
+
+    # args should be fully resolved
+    def withAppliedArgs(self, typeArgs):
+        expr = TypeExpr([self.name])
+        expr.typeRef = self
+        expr.args = typeArgs
+        return expr
 
     def visit(self, visitor):
         visitor.enterDataTypeDef(self)
@@ -246,14 +336,16 @@ class DataTypeDef(Entity):
         visitor.exitDataTypeDef(self)
 
 
-class Constructor(Entity):
+class Constructor(Function):
     entityKind = 'Constructor'
     _attrnames = ('name', 'type', 'datatype')
 
     def __init__(self, name=None, type=None, datatype=None):
-        self.name = name         # String
-        self.type = type         # Type
+        super().__init__(name, type)
         self.datatype = datatype # DataTypeDef
+
+    def getId(self):
+        return id(self)
 
     def visit(self, visitor):
         visitor.enterConstructor(self)
@@ -267,6 +359,7 @@ class Type(Entity):
     _attrnames = ('typeArgs', 'argRefs', 'typeExpr')
 
     def __init__(self):
+        super().__init__()
         self.typeArgs = []   # List of String
         self.argRefs = []    # List of TypeVariable
         self.typeExpr = None # TypeExpr
@@ -285,6 +378,7 @@ class Variable(Entity):
     placeholder = '_' # In variable context doesn't bind to variable
 
     def __init__(self, name=None):
+        super().__init__()
         self.name = name
 
 
@@ -293,6 +387,7 @@ class TypeExpr(Entity):
     _attrnames = ('name', 'args', 'typeRef')
 
     def __init__(self, name=None):
+        super().__init__()
         self.name = name    # QualifiedName
         self.typeRef = None # DataTypeDef
         self.args = []      # List of TypeExpr
@@ -314,6 +409,7 @@ class Expr(Entity):
     # — We'll cheat a little and notice that if lambdas are not present than
     # (f x) y ≡ f x y for any valid expressions f, x, y
     def __init__(self, name=None):
+        super().__init__()
         self.name = name    # QualifiedName
         self.funcRef = None # FunctionDef, Constructor or Variable
         self.args = []      # List of Expr
@@ -330,6 +426,7 @@ class PatternExpr(Entity):
     _attrnames = ('name', 'args', 'bindingRef')
 
     def __init__(self, name=None):
+        super().__init__()
         self.name = name        # QualifiedName. Either constructor, variable
                                 # name or placeholder '_'
         self.bindingRef = None  # Constructor or Variable

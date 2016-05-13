@@ -13,6 +13,7 @@ from itertools import count
 __location__ = os.path.realpath(
     os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
+PRELUDE_MODULE = os.path.join(__location__, 'Prelude.ahs')
 
 # TODO: compiler to LLVM (possibly) (--compile flag?)
 # TODO: tests for interpreter
@@ -23,11 +24,33 @@ __location__ = os.path.realpath(
 # TODO: Type checker
 # TODO: IO
 
-
 def tracer(start, func):
     for i in count(0):
         print(i, ':', func())
         yield i
+
+class Loader:
+    def __init__(self):
+        self.irbuilder = IRBuilder()
+        self.ir = None
+
+    def loadFile(self, filename):
+        assert self.ir is None
+        with open(filename) as file:
+            self.irbuilder.parseModule(
+                AHParser(
+                CommonTokenStream(
+                AHLexer(
+                InputStream(file.read())))))
+
+    def prepareIR(self):
+        assert self.ir is None
+        self.ir = self.irbuilder.makeIR()
+        self.irbuilder = None
+
+    def getInterpretator(self, moduleName, functionName):
+        mainEntry = self.ir.modules[moduleName].scope[functionName]
+        return Box(LazyFunction(mainEntry, []))
 
 
 def main(argv):
@@ -43,25 +66,14 @@ def main(argv):
                                       help='function to be executed (default --entry Main main)')
     args = argParser.parse_args(argv[1:])
 
-    # TODO: better to make separate class doing just translation
-    # TODO: load builtin module
-    irbuilder = IRBuilder()
-
+    loader = Loader()
+    loader.loadFile(PRELUDE_MODULE)
     for filename in args.files:
-        with open(filename) as file:
-            irbuilder.parseModule(
-                AHParser(
-                CommonTokenStream(
-                AHLexer(
-                InputStream(file.read())))))
+        loader.loadFile(filename)
 
-    ir = irbuilder.makeIR()
+    loader.prepareIR()
+    lazyExpr = loader.getInterpretator(*args.entry)
 
-    moduleName, functionName = args.entry
-    mainEntry = ir.modules[moduleName].scope[functionName]
-
-    # TODO: should make factory methods
-    lazyExpr = Box(LazyFunction(mainEntry, []))
     if args.trace:
         stepCounter = tracer(0, lambda: lazyExpr.str())
     else:
@@ -69,7 +81,7 @@ def main(argv):
     lazyExpr.toWHNF(stepCounter)
     numSteps = next(stepCounter)
 
-    print("main evaluated in", numSteps, "steps to:", lazyExpr.str())
+    print("\n===> main evaluated in", numSteps, "steps to:", lazyExpr.str())
 
 
 if __name__ == "__main__":

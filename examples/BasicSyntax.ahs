@@ -1,31 +1,229 @@
-module Hello where
+{-
 
+Tip: Haskell syntax highlighting is mostly compatible with this language.
 
-data Bool where
-    True : Bool
-    False : Bool
+To run this module use:
 
-data Nat where
-    Zero : Nat
-    Succ : Nat → Nat
+$ python build/main.py examples/BasicSyntax.ahs
+>> Hello World!
 
-data BinTree a where
-    Leaf : a → BinTree a
-    Branch : BinTree a → BinTree a → BinTree a
+To run different main function use --entry switch:
 
-not : Bool → Bool
-or : Bool → Bool → Bool
-treeMap : a b ⇒ BinTree a → (a → b) → BinTree b
+$ python build/main.py examples/BasicSyntax.ahs --entry Main main\'
+>>!dlroW olleH
 
-not True = False
-not False = True
+$ python build/main.py examples/BasicSyntax.ahs --entry Main main\'\'
+>> HELLO WORLD!
 
-or False False = False
-or _ _ = True
+$ python build/main.py examples/BasicSyntax.ahs --entry Main mainGreet
+UserName
+>> Hello UserName!
+-}
 
-treeMap (Leaf x) f = Leaf (f x)
-treeMap (Branch l r) f = Branch (treeMap l f) (treeMap r f)
+module Main where
 
 -- This is one-line comment
+
 {- This is
 multiline comment and {- it can be nested -} -}
+
+--
+-- A small number of builtin types and functions is defined in Prelude module
+-- which is imported automatically in every module (see Prelude.ahs module).
+--
+
+--
+-- Let's define ourself a mini library
+--
+module MiniLib where
+    -- Boolean type
+    data Bool where
+        True : Bool
+        False : Bool
+
+    -- `if then else` construction
+    if_then_else_ : a ⇒ Bool → a → a → a
+    if_then_else_ True t _ = t
+    if_then_else_ False _ f = f
+
+    -- Arrow `→` can be also entered as `->`
+    -- Arrow `⇒` can be also entered as `=>`
+
+    -- Order of all definitions in module is not important. All imports, module
+    -- definitions, function definitions, function type definitions, datatypes
+    -- can go in any order. The only case where order matters is pattern
+    -- matching rules (they are always matched from top to bottom).
+
+    -- Every function requires a type definition. Currently typechecking is not
+    -- implemented so actually any type will typecheck.
+    not : Bool → Bool
+    or : Bool → Bool → Bool
+
+    not True = False
+    not False = True
+    or False False = False
+    or _     _     = True
+
+    -- Unary-encoded natural numbers
+    data Nat where
+        Zero : Nat
+        Succ : Nat → Nat
+
+    data List a where
+        Cons : a → List a → List a
+        Nil : List a
+
+    -- Currying and first-class functions are supported
+    map : a b ⇒ (a → b) → List a → List b
+    map f (Cons x xs) = Cons (f x) (map f xs)
+    map _ Nil = Nil
+
+
+    -- Add element to the end of list
+    snoc : a ⇒ a → List a → List a
+    snoc x (Cons y ys) = Cons y (snoc x ys)
+    snoc x Nil = Cons x Nil
+
+    -- Append two lists
+    _++_ : a ⇒ List a → List a → List a
+    _++_ (Cons x xs) right = Cons x (_++_ xs right) 
+    _++_ Nil right = right
+
+    -- Binary tree
+    data BinTree a where
+        Leaf : a → BinTree a
+        Branch : BinTree a → BinTree a → BinTree a
+
+    treeMap : a b ⇒ BinTree a → (a → b) → BinTree b
+    treeMap (Leaf x) f = Leaf (f x)
+    treeMap (Branch l r) f = Branch (treeMap l f) (treeMap r f)
+
+    -- Ignores second argument
+    const : a b ⇒ a → b → a
+    const x _ = x
+
+    -- Renaming import
+    -- This also exports bindIO as _>>=_
+    from Prelude import (bindIO as _>>=_)
+
+    -- Operator (>>) from Haskell. _>>_ naming convension is adopted from Agda.
+    -- bindIO corresponds to (>>=) in Haskell and defined in Prelude.
+    -- _>>_ sequences two actions.
+    _>>_ : a b ⇒ IO a → IO b → IO b
+    _>>_ before after = bindIO before (const after)
+
+    -- Prints string to stdout
+    putStr : List Char → IO ⊤
+    putStr (Cons c rest) = _>>_ (putChar c) (putStr rest)
+    putStr Nil = returnIO []
+
+    -- Function composition
+    _∘_ : a b c ⇒ (b → c) → (a → b) → (a → c)
+    _∘_ f g x = f (g x)
+
+    -- Lifting function to IO monad
+    liftIO : a b ⇒ (a → b) → IO a → IO b
+    liftIO f before = bindIO before (_∘_ returnIO f)
+
+    -- Reads characters until newline encountered 
+    readLine : IO (List Char)
+    readLine = (liftIO reversed) (bindIO getChar (collectCharacters Nil))
+
+    collectCharacters : List Char → Char → IO (List Char)
+    collectCharacters cs '\n' = returnIO cs
+    collectCharacters cs c    = bindIO getChar (collectCharacters (Cons c cs))
+
+    -- Reverse list
+    reversed : a ⇒ List a → List a
+    reversed xs = reversedWithTail xs Nil
+
+    -- Think of list as a stack. Take elements from left list one by one and put
+    -- them on right list. This will reverse the list.
+    reversedWithTail : a ⇒ List a → List a → List a
+    reversedWithTail (Cons x xs) ys = reversedWithTail xs (Cons x ys)
+    reversedWithTail Nil ys = ys
+
+    -- Char datatype is actually uses unicode but for the sake of brivety we
+    -- will define `upperCase` only for english characters
+    upperCase : Char → Char
+    upperCase 'a' = 'A'
+    upperCase 'b' = 'B'
+    upperCase 'c' = 'C'
+    upperCase 'd' = 'D'
+    upperCase 'e' = 'E'
+    upperCase 'f' = 'F'
+    upperCase 'g' = 'G'
+    upperCase 'h' = 'H'
+    upperCase 'i' = 'I'
+    upperCase 'j' = 'J'
+    upperCase 'k' = 'K'
+    upperCase 'l' = 'L'
+    upperCase 'm' = 'M'
+    upperCase 'n' = 'N'
+    upperCase 'o' = 'O'
+    upperCase 'p' = 'P'
+    upperCase 'q' = 'Q'
+    upperCase 'r' = 'R'
+    upperCase 's' = 'S'
+    upperCase 't' = 'T'
+    upperCase 'u' = 'U'
+    upperCase 'v' = 'V'
+    upperCase 'w' = 'W'
+    upperCase 'x' = 'X'
+    upperCase 'y' = 'Y'
+    upperCase 'z' = 'Z'
+    upperCase x = x
+
+-- Let's import some names from our library that we will use later
+from MiniLib import List Cons Nil putStr
+                    reversed map upperCase _++_ snoc
+
+-- Let's for a moment go silly with module imports.
+-- Import from itself name Foo and rename it to Bar
+from Main import (Foo as Bar)
+-- And now import name Bar (that was just defined in previous import) and name
+-- it Foo
+from Main import (Bar as Foo)
+-- So here we have cyclic imports, which doesn't make a lot of sense. It's fine
+-- though as long as names Foo and Bar aren't actually used anywhere.
+
+
+-- Name of entry function is passed in command line arguments. `main` from
+-- `Main` module is default.
+-- IO and ⊤ types are defined in Prelude.
+main : IO ⊤
+-- Even though "HelloWorld!" looks like a string literal it's actually an
+-- identifier.
+main = putStr "HelloWorld!"
+
+-- Use --entry Main main' switch in command line to call this function 
+main' : IO ⊤
+main' = putStr (reversed "HelloWorld!")
+
+main'' : IO ⊤
+main'' = putStr (map upperCase "HelloWorld!")
+
+-- Note that `MiniLib.readLine` is an example of qualified name
+mainGreet : IO ⊤
+mainGreet = bindIO MiniLib.readLine greet
+
+greet : List Char → IO ⊤
+greet name = bindIO (bindIO (bindIO
+    (putStr "Hello") (putChar '\s')) (putStr name)) (putChar '!')
+
+-- Define constants
+"Hello" : List Char
+"Hello" = Cons 'H' (Cons 'e' (Cons 'l' (Cons 'l' (Cons 'o' Nil))))
+
+"World" : List Char
+"World" = Cons 'W' (Cons 'o' (Cons 'r' (Cons 'l' (Cons 'd' Nil))))
+
+-- '\s' denotes space character. Also '\n' denotes newline.
+"HelloWorld!" : List Char
+"HelloWorld!" = _++_ "Hello" (Cons '\s' (snoc '!' "World"))
+
+-- Features not covered in this file:
+-- * Modules can be imported from other files
+-- * Also module itself can be imported with `import ModuleName`
+-- * Modules in the same file can reference each other
+-- * Strict evaluations are supported

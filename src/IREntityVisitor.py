@@ -17,6 +17,12 @@ class EntityVisitor:
     def exitFunctionDef(self, function):
         pass
 
+    def enterInternalFunction(self, function):
+        pass
+
+    def exitInternalFunction(self, functions):
+        pass
+
     def enterDataTypeDef(self, datatype):
         pass
 

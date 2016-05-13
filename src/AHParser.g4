@@ -10,7 +10,7 @@ topLevelModule :
     | BeginBlock definitions EndBlock
     ) EOF;
 
-definitions : ( module | dataDef | funcDef | funcTypeDef | importStmt /*| exportStmt */)* ;
+definitions : ( module | dataDef | funcDef | funcTypeDef | importStmt | pragmaStmt /*| exportStmt */)* ;
 
 module : moduleHeader BeginBlock definitions EndBlock ;
 
@@ -26,6 +26,8 @@ typeWithArgs : ( typeParams '=>' )? typeExpr ;
 funcDef : ID pattern* '=' expr NEWLINE ;
 
 importStmt : moduleImport | entityImport ;
+
+pragmaStmt : 'pragma' ID* NEWLINE ;
 
 moduleImport : 'import' qualifiedName (ID ID)? NEWLINE ;
 

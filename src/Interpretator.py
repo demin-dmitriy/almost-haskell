@@ -19,6 +19,12 @@ class LazyExpr:
         raise NotImplementedError()
 
     def toWHNF(self, it):
+        boxed = self.parentBox
+        while not boxed.isInWHNF():
+            boxed.betaReduce(it)
+
+    # Reduce one ore more times
+    def betaReduce(self, it):
         raise NotImplementedError()
 
     def cloneWithArgs(self, args):
@@ -84,8 +90,8 @@ class LazyFunction(LazyExpr):
                 expr.toWHNF(it)
                 if not expr.isConstructor():
                     raise RuntimeError("Pattern matching failed: argument is "
-                                       + "not a constructor. (typing error?)")
-                if id(pattern.bindingRef) != expr.getConstructor():
+                                       "not a constructor. (typing error?)")
+                if pattern.bindingRef.getId() != expr.getConstructor():
                     # pattern didn't match it's arguments
                     return False
                 for patternArg, exprArg in zip(pattern.args, expr._args):
@@ -107,12 +113,19 @@ class LazyFunction(LazyExpr):
 
         if isinstance(expr.funcRef, Variable):
             if not id(expr.funcRef) in bindings:
-                raise RuntimeError('Unbinded variable')
+                raise RuntimeError('Unbinded variable `{}`({}) (note, '
+                                   'bindings: {})'
+                                   .format(expr.funcRef.name,
+                                           id(expr.funcRef),
+                                           bindings))
             binding = bindings[id(expr.funcRef)]
             return Box(LazyApp(binding, args))
 
         elif isinstance(expr.funcRef, FunctionDef):
             return Box(LazyFunction(expr.funcRef, args))
+
+        elif isinstance(expr.funcRef, InternalFunction):
+            return Box(expr.funcRef.interpreterImpl(args))
 
         elif isinstance(expr.funcRef, Constructor):
             return Box(LazyConstructor(expr.funcRef, args))
@@ -123,13 +136,7 @@ class LazyFunction(LazyExpr):
     def isInWHNF(self):
         return self._f.patternLen > len(self._args)
 
-    # WHNF = weak head normal form
-    def toWHNF(self, it):
-        boxed = self.parentBox # 'parentBox' field will be set to None later
-        while not boxed.isInWHNF():
-            boxed._toWHNFImpl(it)
-
-    def _toWHNFImpl(self, it):
+    def betaReduce(self, it):
         if self.isInWHNF():
             return
 
@@ -174,7 +181,7 @@ class LazyConstructor(LazyExpr):
     def isInWHNF(self):
         return True
 
-    def toWHNF(self, it):
+    def betaReduce(self, it):
         return
 
     def isConstructor(self):
@@ -183,11 +190,11 @@ class LazyConstructor(LazyExpr):
     def getConstructor(self):
         if len(self._args) < self._argCount:
             raise RuntimeError("Can't pattern match constructor: it doesn't "
-                               + "have enough arguments (type error?)")
+                               "have enough arguments (type error?)")
         elif len(self._args) > self._argCount:
             raise RuntimeError("Can't pattern match constructor: it has too "
-                               + "many arguments (type error?)")
-        return id(self._c)
+                               "many arguments (type error?)")
+        return self._c.getId()
 
 
 class LazyApp(LazyExpr):
@@ -195,10 +202,8 @@ class LazyApp(LazyExpr):
         super().__init__(args)
         self._expr = lazyExpr
 
-    # Actually this method won't be called in this interpreter, but it's part
-    # of interface.
     def cloneWithArgs(self, args):
-        return Box(LazyApp, self._expr, self._args + args)
+        return Box(LazyApp(self._expr, self._args + args))
 
 
     def str(self, visited=None):
@@ -209,10 +214,8 @@ class LazyApp(LazyExpr):
     def isInWHNF(self):
         return False
 
-    def toWHNF(self, it):
+    def betaReduce(self, it):
         # Evaluate subexpression first, to maximize sharing
         self._expr.toWHNF(it)
         newExpr = self._expr.cloneWithArgs(self._args)
-        newExpr.toWHNF(it)
         self.overwriteWith(newExpr)
-

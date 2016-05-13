@@ -63,6 +63,7 @@ AHToken = _enumerateTokens([
     ('Module', "'module'"),
     ('From', "'from'"),
     ('Import', "'import'"),
+    ('Pragma', "'pragma'"),
     ('NEWLINE',),
     ('ID',)])
 
@@ -219,7 +220,7 @@ class AHLexer:
             self._state = self._State.DEFAULT
         else: # token.column > currentIndentation
             raise LexerError("Indentation error. Can't continue expression "
-                             + "after closing block", token.line, token.column,
+                             "after closing block", token.line, token.column,
                              token.start)
         # TODO: creating tokens <Start Block> and <End Block> should be refactored
         return self._make_token(AHToken.EndBlock, "<End Block>")

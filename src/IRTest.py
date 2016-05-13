@@ -4,6 +4,7 @@ from antlr4 import InputStream, CommonTokenStream
 from AHParser import AHParser
 from IR import *
 
+# TODO: All these tests won't work, because we need minimum library
 
 class IRTest(TestCase):
     def parse(self, s):
